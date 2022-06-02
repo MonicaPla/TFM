@@ -1,0 +1,430 @@
+---
+title: "Código"
+author: "Mónica Pla"
+date: "31/5/2022"
+output: html_document
+---
+El siguiente código es una adaptación de: 
+
+https://github.com/adlpecer/PD_GeneMetaanalysis
+https://sbc.shef.ac.uk/geo_tutorial/tutorial.nb.html, Mark Dunning
+
+
+DATA COLLECTION
+
+#################### Librerias ###########################
+
+```{r}
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(version = "3.14")
+install.packages("rlang")
+BiocManager::install("GEOquery", force = TRUE)
+BiocManager::install("limma")
+
+library(Biobase)
+library(GEOquery)
+library(limma)
+library(affy)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(reshape2)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(Biobase)
+library(ggplot2)
+library(factoextra)
+library(ggdendro)
+library(dplyr)
+library(oligo)
+```
+
+
+#################Cargar datos######################################
+
+```{r}
+# Array containing the IDs of the included studies from GEO
+dir.create("C:/Users/monic/Desktop/CIS", recursive = TRUE)#Crear el directorio en donde vamos a trabajar y guardar los documento
+setwd(dir= "C:/Users/monic/Desktop/CIS/")
+gse_list <- unique(c("GSE14895")) #Modificar el GSE según el conjunto de datos que se vaya a analizar
+GSE <- lapply(c(gse_list), function(x) getGEO(x)[[1]])
+names(GSE) <- gse_list
+arraysP <- GSE
+```
+
+############# Guardar la lista de estudios ####################
+
+```{r}
+setwd(dir= "C:/Users/monic/Desktop/CIS//")
+dir.create("C:/Users/monic/Desktop/CIS/DATA", recursive = TRUE)
+save(arraysP, file = "C:/Users/monic/Desktop/CIS/DATA/arrays.RData")
+```
+
+ESTANDARIZACIÓN DE LOS DATOS
+
+Como ejemplo utilizaremos:
+
+######### GSE14895 ######### 
+
+```{r}
+#Cargamos el archivo donde estan nuestros estudios (en este caso único pero se puede hacer con varios al mismo tiempo)
+load("C:/Users/monic/Desktop/CIS/DATA/arrays.RData")
+#Cargamos el estudio que queremos revisar
+array <-arraysP[[1]]
+#Revisamos las variables, los nombres de las muestras, etc. 
+pData(array)
+#Realizamos los cambios oportunos y definimos los grupos experimentales
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,1:9, "N")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,10:20, "Control")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,21, "Control")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,22:23, "CIS")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,24, "Control")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,25:28, "CIS")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,29, "Control")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,30:36, "CIS")
+array$`disease state:ch1`<-replace(array$`disease state:ch1`,37, "Control")
+
+#Escogemos las columnas/variables que nos interesan del pData.
+df <- pData(array)
+dplot = data.frame(group=(df$`disease state:ch1`),
+                   patient=(df$geo_accession))
+rownames(dplot) <- rownames(df)
+#Escogemos solo aquellas filas que tienen muestras de interés para el proyecto y modificamos el objeto.
+array <- array[,dplot$group %in% c("Control", "CIS")]
+array
+dplot<-dplot[10:37,]
+dplot
+pData(array)<-dplot
+arraysP[["GSE14895"]] <- array
+
+## Guardamos el resultado
+dir.create("C:/Users/monic/Desktop/CIS/Output", recursive = TRUE)
+save(arraysP, file = "C:/Users/monic/Desktop/CIS/Output/arrays_st.RData")
+``` 
+
+EXPLORACIÓN DE LOS DATOS Y PREPROCESAMIENTO DE LOS DATOS
+
+##############Barplot para observar las muestras que hay en cada dataset que vamos a analizar#################
+
+Usualmente este código tiene mas sentido si estas analizando mas de un conjunot de datos a la vez ya que te arroja un barplot conjunto.
+```{r}
+load("C:/Users/monic/Desktop/CIS/Output/arrays_st.RData")
+ret<- data.frame()
+for (s in names(arraysP)){
+ array<- arraysP[[s]]
+ array
+  if (nrow(ret)==0){
+    x<-dim(array)[2]
+    x
+    new <- rep(s, x)
+    new
+    array<-pData(array)
+    array
+    array <- cbind(new,array)
+    ret <- cbind(array$group, array$new )
+    colnames(ret)<- c("group","dataset")
+  } else {
+    array<-pData(array)
+    array
+    x<-dim(array)[2]
+    x
+    new <- rep(s, x)
+    array <- cbind(array$group,new)
+    array
+    array <- data.frame(array)
+    array
+    colnames(array)<-c("group","dataset")
+    array
+    ret<-rbind(ret,array)
+  }
+ ret<-data.frame(ret)
+}
+ret
+write.csv(ret, "C:/Users/monic/Desktop/CIS/ret.cvs")
+
+  agg <- count(ret, group, dataset, .drop = FALSE)
+  agg
+ggplot(agg, aes(x = group, y = n, fill = dataset)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+    labs(title ="") +
+    geom_text(aes(label=n),
+              vjust=1.6,
+              position = position_dodge(0.9), size=4) +
+    theme_minimal() +
+    facet_wrap(~ dataset) +
+    theme(strip.text.x = element_text(size = 12),
+          plot.background=element_rect(fill="white"))
+  
+  ggsave(paste0("C:/Users/monic/Desktop/CIS/Output",study,"_bar.png"),width = 12,height = 5)
+```
+
+
+
+
+```{r}
+# Function to pick median values when duplicated genes
+medianReps <- function(matriz){
+  ID <- as.character(rownames(matriz))
+  ID <- factor(ID, levels = unique(ID))
+  df <- by(matriz, ID, function(x) apply(x, 2, stats::median))
+  mat <- do.call("rbind", df)
+  return(mat)
+}
+```
+
+
+######### GSE14895 ######### 
+
+```{r}
+# Load the list of ExpressionSets
+load("C:/Users/monic/Desktop/CIS/Output/arrays_st.RData")
+
+# Preproccess expression matrix with log2 transform
+# minimum value is set to 1 before transformation to get minimum equal to 0
+array <- arraysP[[1]]
+exprs(array) <- exprs(array) + (abs(min(exprs(array))) + 1)
+exprs(array) <- log2(exprs(array))
+
+# Annotation of probes with ID
+# Select median values when duplicated genes
+genedata <- fData(array)
+genedata <- genedata[,c("ID")]
+genedata$ID <- sub(" ///.*","",genedata$ID)
+exprs0 <- exprs(array)
+rownames(exprs0) <- genedata$ID
+exprs0 <- medianReps(exprs0)
+exprs0 <- exprs0[rownames(exprs0) != "",]
+genedata <- genedata[match(rownames(exprs0),genedata$ID),c("ID")]
+rownames(genedata) <- genedata$ID
+
+# Build the new preprocessed ExpressionSet and save it in list of arrays
+proc_array <- new("ExpressionSet",
+                     exprs=exprs0,
+                     annotation=annotation(array))
+fData(proc_array) <- genedata
+pData(proc_array) <- pData(array)
+fData(proc_array)
+proc_array
+
+arraysP[["GSE14895"]] <- proc_array
+
+#Save file
+save(arraysP, file ="C:/Users/monic/Desktop/CIS/Output/arrays_proc.RData")
+``` 
+
+############## Analisis de visualización HETMAP accesorio#######################
+```{r}
+# Load the list of ExpressionSets
+library(pheatmap)
+plotHEAT <- function(study,l.studies){
+  # Create plots directory
+  wd <- "C:/Users/monic/Desktop/FINAL/Plots"
+  dir.create(wd, recursive = TRUE)
+  # Extract expression set from list
+  array <- l.studies[[study]]
+## argument use="c" stops an error if there are any missing data points
+corMatrix <- cor(exprs(array),use="c")
+## Print the rownames of the sample information and check it matches the correlation matrix
+sampleInfo <- pData(array)
+rownames(sampleInfo)
+colnames(corMatrix)
+## If not, force the rownames to match the columns
+rownames(sampleInfo) <- colnames(corMatrix)
+my_sample_col <- data.frame(group=sampleInfo$group)
+my_sample_col
+row.names(my_sample_col) <- rownames(sampleInfo)
+row.names(my_sample_col)
+aka3 = list(group =c(CIS = "peachpuff", Control="maroon"))
+pheatmap(corMatrix, color = colorRampPalette(c( "white","BEIGE", "LIGHTBLUE", "blue", "NAVY","red", "black"))(100), annotation_legend = TRUE, annotation_col = my_sample_col, annotation_colors = aka3)
+
+}
+
+# START
+load("C:/Users/monic/Desktop/CIS/Output/arrays_st.RData")
+for (s in names(arraysP)){
+ plotHEAT(s,arraysP)
+}
+```
+
+ANALISIS DE EXPRESIÓN DIFERENCIAL
+
+```{r}
+# Load the list of ExpressionSets
+load("C:/Users/monic/Desktop/CIS/Output/arrays_proc.RData")
+
+# Differential expression function
+array<- arraysP[[1]]
+diffexprs <- function(X){
+  design <- model.matrix(~ 0 + array$group)
+  colnames(design) <- c("Control","CIS") #Se debe estar seguro de que orden siguen las columnas para otorgarles el nombre, sino pueden haber errores luego en la interpretación de resultados
+  aw <- arrayWeights(exprs(array),design)#http://www.biomedcentral.com/1471-2105/7/261
+  fit <- lmFit(exprs(array),design, weights = aw)
+  cont.matrix <- makeContrasts(CIS-Control,levels = design)
+  fit2 <- contrasts.fit(fit,cont.matrix)
+  fit2 <- eBayes(fit2)
+}
+
+
+wd<- "C:/Users/monic/Desktop/CIS//Results/DEA/"
+dir.create("C:/Users/monic/Desktop/CIS/Results/DEA/", recursive = TRUE)
+
+# Empty list of results
+ALLfit <- list()
+
+for (study in names(arraysP)){
+  array <- arraysP[[study]]
+  # All tissues DEA
+  fit <- diffexprs(array)
+  
+  ALLfit[[study]] <- fit
+  
+  ## change according to your needs
+cont <- topTable(fit,adjust="BH",sort="none",n=Inf)
+write.csv(cont,paste0(wd,study,"_ALL_cont",1,".csv"))
+cont1<- filter(cont, adj.P.Val < 0.1, abs(logFC) > 0.5)
+  # Write significant
+  
+  write.csv(cont1,paste0(wd,study,"_PART_cont",1,".csv"))
+    
+cont%>% mutate( Significant = adj.P.Val < 0.1,  abs(logFC) > 0.5 ) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant)) + geom_point()+ geom_vline(xintercept=0.5) + geom_vline(xintercept=-0.5)
+ 
+ggsave(paste0("C:/Users/monic/Desktop/CIS/Output",study,"_volcano.png"),width = 12,height = 5)
+}
+
+```
+
+
+```{r}
+########## ANOTACION de los resultados ###########
+#BiocManager::install("hgu133plus2.db")
+library(hgu133plus2.db)
+
+annotatedTopTable <- function(topTab, anotPackage){
+  topTab <- cbind(PROBEID=rownames(topTab), topTab)
+  myProbes <- rownames(topTab)
+  thePackage <- eval(parse(text = anotPackage))
+  geneAnots <- select(thePackage, myProbes, c("SYMBOL", "ENTREZID", "GENENAME", "GO"))
+  annotatedTopTab<- merge(x=geneAnots, y=topTab, by.x="PROBEID", by.y="PROBEID")
+  return(annotatedTopTab)
+  }
+
+wd<- "C:/Users/monic/Desktop/CIS//Results/DEA/Anota" #Creamos una nueva dirección para guardar las anotaciones
+
+#Leemos los archivos donde tenemos los resultados
+x<- read.csv("C:/Users/monic/Desktop/CIS/Results/DEA/GSE14895_PART_cont1.csv", header = TRUE, sep = ",")
+rownames(x)<- x$X
+y<- read.csv("C:/Users/monic/Desktop/CIS/Results/DEA/GSE14895_ALL_cont1.csv", header = TRUE, sep = ",")
+rownames(y)<- y$X
+
+#Anotamos
+topAnnotated_KOvsWT.COLD <- annotatedTopTable(x,anotPackage="hgu133plus2.db")
+
+topAnnotated_KOvsWT.Tot<- annotatedTopTable(y,anotPackage="hgu133plus2.db")
+
+#Guardamos el resultado
+write.csv(topAnnotated_KOvsWT.COLD,paste0(wd,"Anot25MAYDEG_cont",".csv"))
+write.csv(topAnnotated_KOvsWT.Tot,paste0(wd,"Ano25mayTotDEG_cont",".csv"))
+```
+
+SIGNIFICACIÓN BIOLOGICA
+
+Respecto a la significación biologica, en este proyecto se ha hecho uniendo varios listados de genes diferencialmente expresados de diferentes conjunos de datos pero del mismo subtipo clinico. 
+
+Por ello, la primera parte del siguiente código se centra en unir los resultados de los DEG's de pacientes con el subtipo EMRR como modo  de ejemplo. 
+
+########### UNIR RESULTADOS DE LOS DEG'S ##############################
+
+```{r}
+##Lectura de todos los listados.
+A<- read.csv("C:/Users/monic/Desktop/ARCHIVOS FINALES/GSE17048/Results/DEA/GSE17048DEG_ANOT1.csv", header = TRUE, sep = ",")
+B <- read.csv("C:/Users/monic/Desktop/ARCHIVOS FINALES/GSE138064/Results/DEA/GSE138064_Annot1.csv", header = TRUE, sep = ",")
+C <- read.csv("C:/Users/monic/Desktop/GSE78244MAL/Results/DEA/GSE78244_Annot1.csv", header = TRUE, sep = ",")
+
+#Agrupar por el Entrez ID
+A <- A %>% group_by(ENTREZID) %>% filter (! duplicated(ENTREZID))
+B <- B %>% group_by(ENTREZID) %>% filter (! duplicated(ENTREZID))
+C <- C %>% group_by(ENTREZID) %>% filter (! duplicated(ENTREZID))
+
+#Extraer las columnas con las que vamos a trabajar
+RRMSA <- data.frame(A$Entrez_Gene_ID, A$logFC)
+RRMSB <- data.frame(B$ENTREZID, B$logFC)
+RRMSC <- data.frame(C$ENTREZID, C$logFC)
+RRMSA;RRMSB;RRMSC
+
+#Renombrar las columnas
+colnames(RRMSA)<- c("ENTREZID", "logFC")
+colnames(RRMSB)<- c("ENTREZID", "logFC")
+colnames(RRMSC)<- c("ENTREZID", "logFC")
+
+#Unirlas y eliminar NA.
+EMRR <- rbind(RRMSA,RRMSB,RRMSC)
+EMRR <- na.omit(EMRR)
+
+#Guardar documentos
+EMRRUP <-EMRR %>% group_by(ENTREZID) %>% filter(logFC > 0)
+EMRRDOWN <- EMRR %>% group_by(ENTREZID) %>% filter(logFC < 0)
+write.csv(EMRRUP, "C:/Users/monic/Desktop/TFM/CÓDIGOfINAL/EMRRUPGLOBAL.csv")
+write.csv(EMRRDOWN, "C:/Users/monic/Desktop/TFM/CÓDIGOfINAL/EMRRDOWNGLOBAL.csv")
+write.csv(EMRR, "C:/Users/monic/Desktop/TFM/CÓDIGOfINAL/EMRRGLOBAL.csv")
+```
+
+############# ORA-KEGG ###############
+
+```{r}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+ #   install.packages("BiocManager")
+
+#BiocManager::install("clusterProfiler")
+library(clusterProfiler)
+library(dplyr)
+
+#Down
+Down <- subset(EMRR$ENTREZID, EMRR$logFC < 0)
+KEGG_genesD <- enrichKEGG(gene= Down, organism= "hsa", pvalueCutoff = 0.1)
+head(KEGG_genesD)
+dotplot(KEGG_genesD, showCategory = 15, title = "KEGG Pathways EMRR",font.size = 8)
+
+#UP
+UP <- subset(EMRR$ENTREZID, EMRR$logFC > 0)
+KEGG_genesU <- enrichKEGG(gene= UP, organism= "hsa", pvalueCutoff = 0.1)
+head(KEGG_genesu)
+
+dotplot(KEGG_genesU, showCategory = 15, title = "KEGG Pathways EMRR",font.size = 8)
+
+```
+
+############### ORA-GO ################
+
+```{r}
+#UNIVERSE: cargamos el listado completo de los genes
+gene_list<- read.csv("C:/Users/monic/Desktop/ARCHIVOS FINALES/GSE138064/Results/DEA/UNIVERSE.csv", sep = ",")
+gene_list <- c(gene_list$ENTREZID)
+gene_list<-na.omit(gene_list)
+gene_list <- as.character(gene_list)
+#Down
+Down <- subset(EMRR$ENTREZID, EMRR$logFC < 0)
+GO_genesD <- enrichGO(gene = Down,
+                      universe = gene_list,
+                      OrgDb = "org.Hs.eg.db", 
+                      readable = T,
+                      ont = "all",
+                      pvalueCutoff = 0.1)
+head(GO_genesD)
+barplot(GO_genesD, drop = TRUE, showCategory = 10, title = "GO Biological Pathways EMRR",font.size = 8)
+
+#UP
+UP <- subset(EMRR$ENTREZID, EMRR$logFC > 0)
+GO_genesU <- enrichGO(gene = UP,
+                      universe = gene_list,
+                      OrgDb = "org.Hs.eg.db", 
+                      readable = T,
+                      ont = "all",
+                      pvalueCutoff = 0.1)
+barplot(GO_genesU, drop = TRUE, showCategory = 20, title = "GO Biological Pathways EMRR",font.size = 7)
+
+
+```
